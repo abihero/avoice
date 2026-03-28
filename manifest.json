@@ -2,7 +2,7 @@
   "name": "JustoCall AI",
   "short_name": "JustoCall",
   "description": "Private AI Voice Call Simulator",
-  "start_url": "index.html",
+  "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#000000",
   "theme_color": "#000000",
@@ -12,12 +12,13 @@
       "src": "https://cdn-icons-png.flaticon.com/512/724/724664.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     },
     {
       "src": "https://cdn-icons-png.flaticon.com/512/724/724664.png",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
     }
   ]
 }
