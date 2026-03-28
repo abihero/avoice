@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <title>AVoice Call - PWA Ready</title>
+  <style>
+    /* --- VARIABLES & THEME --- */
+    :root {
+      /* Default Dark Mode (Follows System if @media below matches) */
+      --bg-color: #000000;
+      --surface-color: #1c1c1e;
+      --text-primary: #FFFFFF;
+      --text-secondary: rgba(255, 255, 255, 0.7);
+      --btn-dark: rgba(40, 40, 40, 0.6);
+      --btn-border: rgba(255,255,255,0.1);
+      --safe-area-bottom: env(safe-area-inset-bottom);
+      
+      /* Colors */
+      --primary-red: #FF3B30;
+      --primary-green: #30D158; /* Status Dot Green */
+      --primary-blue: #007AFF;
+      --status-green: #34C759;
+      
+      /* Layout Variables */
+      --avatar-radius: 50%;
+      --btn-radius: 50%;
+      --controls-gap: 24px;
+    }
+
+    /* LIGHT MODE OVERRIDES (Jika HP user mode terang) */
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg-color: #F2F2F7;
+        --surface-color: #FFFFFF;
+        --text-primary: #000000;
+        --text-secondary: rgba(0, 0, 0, 0.6);
+        --btn-dark: rgba(255, 255, 255, 0.7);
+        --btn-border: rgba(0,0,0,0.1);
+        /* Change theme color meta tag via JS if needed, but CSS handles visuals */
+      }
+      body { background-color: var(--bg-color); }
+      
+      /* Adjustments for light mode visibility */
+      .circle-btn { 
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1); 
+        border: 1px solid rgba(0,0,0,0.05);
+      }
+      .end-call-btn-large { box-shadow: 0 4px 12px rgba(255, 59, 48, 0.3); }
+      .avatar-container { border-color: rgba(0,0,0,0.1); box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+      .settings-panel { border-left: 1px solid rgba(0,0,0,0.1); }
+      .bottom-sheet { border-top: 1px solid rgba(0,0,0,0.1); }
+      .keypad-modal { border-top: 1px solid rgba(0,0,0,0.1); }
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+
+    body {
+      background-color: var(--bg-color);
+      color: var(--text-primary);
+      height: 100vh; height: 100dvh;
+      overflow: hidden;
+      display: flex; flex-direction: column;
+      user-select: none;
+      transition: background-color 0.3s ease, color 0.3s ease;
+    }
+
+    /* --- BACKGROUND & VIDEO MODE --- */
+    .background-layer {
+      position: absolute; inset: 0; z-index: 0;
+      background: radial-gradient(circle at 50% 30%, #2c3e50 0%, #000000 70%);
+      transition: all 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+    }
+    /* Gradient for Light Mode */
+    @media (prefers-color-scheme: light) {
+      .background-layer { background: radial-gradient(circle at 50% 30%, #e5e5ea 0%, #d1d1d6 70%); }
+    }
+
+    .background-layer::after { content: ''; position: absolute; inset: 0; background: rgba(0,0,0,0.4); transition: opacity 0.5s; }
+    @media (prefers-color-scheme: light) {
+      .background-layer::after { background: rgba(255,255,255,0.2); }
+    }
+
+    /* VIDEO CALL STATE */
+    body.video-active .background-layer::after { opacity: 0; }
+    body.video-active .background-layer {
+      background-image: url('https://i.pravatar.cc/300?img=44');
+      background-size: cover;
+      background-position: center;
+    }
+    body.video-active .avatar-section { opacity: 0; pointer-events: none; }
+    body.video-active .call-container {
+      background: linear-gradient(to bottom, rgba(0,0,0,0.3) 0%, rgba(0,0,0,0) 30%, rgba(0,0,0,0.8) 100%);
+    }
+    @media (prefers-color-scheme: light) {
+      body.video-active .call-container {
+        background: linear-gradient(to bottom, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0) 30%, rgba(0,0,0,0.4) 100%);
+      }
+    }
+
+    /* --- PROXIMITY SENSOR OVERLAY --- */
+    .proximity-overlay {
+      position: fixed; inset: 0; z-index: 999;
+      background: #000;
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.2s;
+      display: flex; align-items: center; justify-content: center;
+      color: #333; font-size: 12px;
+    }
+    .proximity-overlay.active { opacity: 1; pointer-events: auto; cursor: pointer; }
+
+    /* --- MAIN UI --- */
+    .call-container {
+      position: relative; z-index: 10; flex: 1;
+      display: flex; flex-direction: column;
+      justify-content: space-between;
+      padding-top: 60px; padding-bottom: calc(40px + var(--safe-area-bottom));
+    }
+
+    .header-section { 
+        text-align: center; padding: 0 20px; 
+        animation: fadeInDown 0.5s ease-out; 
+        height: 100px;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+    }
+    
+    /* GREEN DOT INDICATOR */
+    .name-wrapper {
+        display: flex; align-items: center; justify-content: center; gap: 8px;
+    }
+    .ai-status-dot {
+        width: 8px; height: 8px;
+        background-color: var(--status-green);
+        border-radius: 50%;
+        box-shadow: 0 0 6px var(--status-green);
+        display: none; /* Hidden by default until connected */
+    }
+    .ai-status-dot.listening { display: block; }
+
+    .calling-label { font-size: 15px; font-weight: 600; color: var(--text-secondary); margin-bottom: 2px; text-transform: capitalize; }
+    .caller-name { font-size: 32px; font-weight: 600; letter-spacing: 0.3px; margin-bottom: 2px; text-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+    .caller-number { font-size: 16px; font-weight: 400; color: var(--text-secondary); letter-spacing: -0.2px; }
+
+    /* AVATAR */
+    .avatar-section {
+      flex: 1; display: flex; align-items: center; justify-content: center;
+      padding: 20px 0; animation: scaleIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+    .avatar-container {
+      width: 160px; height: 160px; border-radius: var(--avatar-radius); overflow: hidden;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.6); background: var(--surface-color);
+      position: relative; border: 2px solid rgba(255,255,255,0.1);
+      transition: all 0.4s ease;
+    }
+    @media (prefers-color-scheme: light) {
+      .avatar-container { border-color: rgba(0,0,0,0.05); background: #e5e5ea; }
+    }
+    .avatar-img { width: 100%; height: 100%; object-fit: cover; }
+
+    /* CONTROLS */
+    .controls-wrapper { padding: 0 24px; display: flex; flex-direction: column; gap: var(--controls-gap); z-index: 20; }
+    .controls-row-upper, .controls-row-lower { display: flex; justify-content: space-between; align-items: center; }
+    .controls-row-upper { padding: 0 10px; }
+
+    .circle-btn {
+      width: 60px; height: 60px; border-radius: var(--btn-radius);
+      background: var(--btn-dark); backdrop-filter: blur(var(--ios-blur));
+      border: none; display: flex; align-items: center; justify-content: center;
+      cursor: pointer; transition: all 0.2s; position: relative;
+    }
+    .circle-btn:active { transform: scale(0.92); background: rgba(128,128,128,0.3); }
+    .circle-btn svg { width: 26px; height: 26px; stroke: var(--text-primary); stroke-width: 1.8; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+    
+    .circle-btn.active { background: var(--text-primary); }
+    .circle-btn.active svg { stroke: var(--bg-color); } /* Invert stroke for contrast */
+    .circle-btn[data-type="video"].active svg { stroke: var(--primary-blue); }
+    .circle-btn[data-type="mute"].active svg { stroke: #555; }
+
+    /* End Call */
+    .end-call-btn-large {
+      width: 80px; height: 50px; border-radius: 30px;
+      background-color: var(--primary-red);
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; box-shadow: 0 4px 12px rgba(255, 59, 48, 0.4);
+      transition: transform 0.2s;
+    }
+    .end-call-btn-large:active { transform: scale(0.95); background-color: #d63026; }
+    .end-call-btn-large svg { width: 24px; height: 24px; stroke: white; stroke-width: 2.5; fill: none; }
+
+    /* --- BOTTOM SHEET MENU --- */
+    .sheet-overlay {
+        position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100;
+        opacity: 0; pointer-events: none; transition: opacity 0.3s;
+    }
+    .sheet-overlay.open { opacity: 1; pointer-events: auto; }
+
+    .bottom-sheet {
+        position: fixed; left: 0; right: 0; bottom: 0;
+        background: var(--surface-color); border-top-left-radius: 24px; border-top-right-radius: 24px;
+        padding: 20px 0 calc(20px + var(--safe-area-bottom));
+        transform: translateY(100%); transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+        z-index: 101;
+    }
+    .bottom-sheet.open { transform: translateY(0); }
+
+    .sheet-handle { width: 36px; height: 5px; background: #c7c7cc; border-radius: 3px; margin: 0 auto 20px; }
+    .sheet-item {
+        display: flex; align-items: center; padding: 14px 24px; color: var(--primary-blue);
+        font-size: 20px; font-weight: 400; background: none; border: none; width: 100%; text-align: left; cursor: pointer;
+    }
+    .sheet-item:active { background: rgba(0,0,0,0.05); }
+    .sheet-item svg { margin-right: 16px; width: 22px; height: 22px; }
+    .sheet-item.danger { color: var(--primary-red); }
+    .sheet-divider { height: 1px; background: rgba(60,60,67,0.2); margin: 8px 0; }
+
+    /* --- SETTINGS PANEL --- */
+    .settings-panel {
+      position: fixed; top: 0; right: 0; bottom: 0; width: 320px;
+      background: var(--surface-color); backdrop-filter: blur(20px);
+      z-index: 200; transform: translateX(100%); transition: transform 0.3s ease;
+      padding: 60px 20px 20px; box-shadow: -5px 0 20px rgba(0,0,0,0.2);
+      display: flex; flex-direction: column; gap: 20px;
+      border-left: 1px solid var(--btn-border);
+    }
+    .settings-panel.open { transform: translateX(0); }
+    
+    .setting-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .setting-title { font-size: 17px; font-weight: 600; }
+    .btn-close-settings { background: none; border: none; color: var(--primary-blue); font-size: 16px; cursor: pointer; }
+
+    .setting-group { display: flex; flex-direction: column; gap: 8px; }
+    .setting-label { font-size: 13px; color: var(--text-secondary); font-weight: 600; text-transform: uppercase; margin-top: 10px; }
+    .setting-input {
+      background: rgba(118, 118, 128, 0.12); border: none;
+      color: var(--text-primary); padding: 12px; border-radius: 10px; font-size: 15px; outline: none; width: 100%;
+    }
+    .setting-input:focus { border: 1px solid var(--primary-blue); }
+    .setting-desc { font-size: 12px; color: var(--text-secondary); margin-top: 4px; line-height: 1.4; }
+
+    .os-toggle { display: flex; background: rgba(118, 118, 128, 0.12); border-radius: 10px; padding: 4px; }
+    .os-option { flex: 1; text-align: center; padding: 8px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; transition: all 0.2s; color: var(--text-secondary); }
+    .os-option.active { background: var(--surface-color); color: var(--text-primary); box-shadow: 0 2px 5px rgba(0,0,0,0.1); font-weight: 600; }
+    
+    /* Toggle Switch */
+    .switch-container { display: flex; justify-content: space-between; align-items: center; background: rgba(118, 118, 128, 0.12); padding: 12px; border-radius: 10px; margin-top: 5px; }
+    .switch-label { font-size: 15px; }
+    .toggle-switch { position: relative; display: inline-block; width: 44px; height: 24px; }
+    .toggle-switch input { opacity: 0; width: 0; height: 0; }
+    .slider-switch { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #e9e9ea; transition: .4s; border-radius: 34px; }
+    .slider-switch:before { position: absolute; content: ""; height: 20px; width: 20px; left: 2px; bottom: 2px; background-color: white; transition: .4s; border-radius: 50%; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+    input:checked + .slider-switch { background-color: var(--primary-green); }
+    input:checked + .slider-switch:before { transform: translateX(20px); }
+
+    /* Keypad */
+    .keypad-modal { position: fixed; left: 0; right: 0; bottom: 0; background: var(--surface-color); backdrop-filter: blur(30px); border-top-left-radius: 24px; border-top-right-radius: 24px; padding: 30px 20px calc(40px + var(--safe-area-bottom)); transform: translateY(110%); transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1); z-index: 100; }
+    .keypad-modal.open { transform: translateY(0); }
+    .keypad-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 20px; }
+    .keypad-btn { background: transparent; border: none; display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; border-radius: 50%; aspect-ratio: 1; }
+    .keypad-btn:active { background: rgba(0,0,0,0.1); }
+    .key-num { font-size: 32px; font-weight: 300; color: var(--text-primary); line-height: 1; }
+    .key-sub { font-size: 10px; font-weight: 500; color: var(--text-secondary); text-transform: uppercase; margin-top: 4px; letter-spacing: 1px;}
+    .keypad-action { display: flex; justify-content: center; align-items: center; margin-top: 10px; }
+    .hide-keypad-btn { color: var(--primary-blue); font-size: 17px; font-weight: 600; background: none; border: none; cursor: pointer; padding: 10px 20px; }
+
+    /* Toast */
+    .toast { position: fixed; top: 60px; left: 50%; transform: translateX(-50%) translateY(-20px); background: rgba(0,0,0,0.7); backdrop-filter: blur(10px); padding: 8px 16px; border-radius: 20px; font-size: 14px; font-weight: 600; color: white; opacity: 0; transition: all 0.3s ease; z-index: 300; pointer-events: none; }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    /* ANDROID MODE OVERRIDES */
+    body.android-mode {
+      --avatar-radius: 28px;
+      --btn-radius: 50%;
+      --controls-gap: 30px;
+    }
+    body.android-mode .background-layer { background: linear-gradient(180deg, #1f1f1f 0%, #000000 100%); }
+    @media (prefers-color-scheme: light) {
+      body.android-mode .background-layer { background: linear-gradient(180deg, #ffffff 0%, #f2f2f7 100%); }
+    }
+    body.android-mode .avatar-container { border: 4px solid var(--btn-border); }
+    body.android-mode .circle-btn { backdrop-filter: none; background: var(--surface-color); box-shadow: 0 2px 5px rgba(0,0,0,0.2); border: 1px solid var(--btn-border); }
+    body.android-mode .circle-btn:active { background: #e5e5ea; }
+    body.android-mode .circle-btn.active { background: var(--primary-green); }
+    body.android-mode .circle-btn.active svg { stroke: white; }
+    body.android-mode .end-call-btn-large { border-radius: 50%; width: 65px; height: 65px; background-color: var(--primary-red); }
+    body.android-mode .caller-name { font-weight: 500; }
+
+    /* Animations */
+    @keyframes fadeInDown { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes scaleIn { from { opacity: 0; transform: scale(0.8); } to { opacity: 1; transform: scale(1); } }
+  /* Spinner Animation */
+.spinner {
+  width: 50px;
+  height: 50px;
+  border: 5px solid rgba(255, 255, 255, 0.1);
+  border-top-color: #007AFF; /* Warna Biru iOS */
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+#loaderScreen {
+  transition: opacity 0.5s ease;
+}
+
+  
+  </style>
+</head>
+<body>
+  <div id="loaderScreen" style="position:fixed; inset:0; background:#000; z-index:9999; display:flex; flex-direction:column; align-items:center; justify-content:center; color:white;">
+    <div class="spinner"></div>
+    <h2 style="margin-top:20px; font-size: 18px;">Menyiapkan Koneksi..</h2>
+    <p id="loaderStatus" style="color:gray; font-size:12px; margin-top:10px;">Membangunkan Server (Mungkin 30 detik)...</p>
+</div>
+
+
+  <!-- Proximity Overlay -->
+  <div class="proximity-overlay" id="proximityOverlay">Tap to Wake</div>
+
+  <!-- Bottom Sheet (Menu Opsi) -->
+  <div class="sheet-overlay" id="sheetOverlay"></div>
+  <div class="bottom-sheet" id="bottomSheet">
+    <div class="sheet-handle"></div>
+    <button class="sheet-item" onclick="sheetAction('Kontak')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+        Kontak
+    </button>
+    <button class="sheet-item" onclick="sheetAction('Pesan')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+        Pesan
+    </button>
+    <!-- Pengaturan di dalam menu Opsi -->
+    <button class="sheet-item" onclick="openSettings()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+        Pengaturan
+    </button>
+    <div class="sheet-divider"></div>
+    <button class="sheet-item danger" onclick="endCall()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 23 16.92z"></path><line x1="2" y1="2" x2="22" y2="22" stroke-width="2.5"></line></svg>
+        Akhiri Panggilan
+    </button>
+  </div>
+
+  <!-- Settings Panel -->
+  <div class="settings-panel" id="settingsPanel">
+    <div class="setting-header">
+      <div class="setting-title">Pengaturan</div>
+      <button class="btn-close-settings" onclick="closeSettings()">Selesai</button>
+    </div>
+    
+    <div class="setting-group">
+      <label class="setting-label">Mode UI</label>
+      <div class="os-toggle">
+        <div class="os-option" id="optIos" onclick="setOS('ios')">iOS</div>
+        <div class="os-option" id="optAndroid" onclick="setOS('android')">Android</div>
+      </div>
+    </div>
+
+    <div class="setting-group">
+      <label class="setting-label">Nama AI</label>
+      <input type="text" class="setting-input" id="inputName" placeholder="Masukkan nama...">
+      <div class="setting-desc">Nama yang muncul di layar.</div>
+    </div>
+
+    <div class="setting-group">
+      <label class="setting-label">Peran AI (System Prompt)</label>
+      <input type="text" class="setting-input" id="inputRole" placeholder="Contoh: Pacar, Bos...">
+      <div class="setting-desc">Instruksi sifat AI untuk backend.</div>
+    </div>
+
+    <div class="setting-group">
+      <label class="setting-label">Simulasi Sensor</label>
+      <div class="switch-container">
+        <span class="switch-label">Layar Hitam (Mode Telinga)</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="proximityToggle">
+          <span class="slider-switch"></span>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <!-- Background / Video Layer -->
+  <div class="background-layer" id="bgLayer"></div>
+
+  <div class="call-container">
+    <header class="header-section">
+      <div class="calling-label" id="statusLabel">Memanggil...</div>
+      <div class="name-wrapper">
+        <!-- Green Dot for Listening State -->
+        <span class="ai-status-dot" id="aiStatusDot"></span>
+        <div class="caller-name" id="callerName">Vira</div>
+      </div>
+      <div class="caller-number">Voice Call</div>
+    </header>
+
+    <main class="avatar-section">
+      <div class="avatar-container">
+        <img src="https://i.pravatar.cc/300?img=44" alt="Avatar" class="avatar-img" id="mainAvatar">
+      </div>
+    </main>
+
+    <div class="controls-wrapper">
+      <div class="controls-row-upper">
+        <button class="circle-btn" id="btnSpeaker" onclick="toggleBtnState(this, 'Speaker')">
+          <svg viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path></svg>
+        </button>
+        <button class="circle-btn" id="btnVideo" data-type="video" onclick="toggleVideo(this)">
+          <svg viewBox="0 0 24 24"><polygon points="23 7 16 12 23 17 23 7"></polygon><rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect></svg>
+        </button>
+        <button class="circle-btn" id="btnMute" data-type="mute" onclick="toggleBtnState(this, 'Mute')">
+          <svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
+        </button>
+      </div>
+
+      <div class="controls-row-lower">
+        <button class="circle-btn" id="btnKeypad" onclick="toggleKeypad()">
+          <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect></svg>
+        </button>
+        <button class="end-call-btn-large" onclick="endCall()">
+          <svg viewBox="0 0 24 24"><path d="M23 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.0 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 23 16.92z"></path><line x1="2" y1="2" x2="22" y2="22" stroke-width="2.5"></line></svg>
+        </button>
+        <button class="circle-btn" id="btnMore" onclick="toggleSheet(true)">
+          <svg viewBox="0 0 24 24" fill="var(--text-primary)" stroke="none"><circle cx="12" cy="12" r="2"></circle><circle cx="6" cy="12" r="2"></circle><circle cx="18" cy="12" r="2"></circle></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Keypad Modal -->
+  <div class="keypad-modal" id="keypadModal">
+    <div class="keypad-grid">
+      <button class="keypad-btn" onclick="pressKey('1')"><span class="key-num">1</span><span class="key-sub">&nbsp;</span></button>
+      <button class="keypad-btn" onclick="pressKey('2')"><span class="key-num">2</span><span class="key-sub">ABC</span></button>
+      <button class="keypad-btn" onclick="pressKey('3')"><span class="key-num">3</span><span class="key-sub">DEF</span></button>
+      <button class="keypad-btn" onclick="pressKey('4')"><span class="key-num">4</span><span class="key-sub">GHI</span></button>
+      <button class="keypad-btn" onclick="pressKey('5')"><span class="key-num">5</span><span class="key-sub">JKL</span></button>
+      <button class="keypad-btn" onclick="pressKey('6')"><span class="key-num">6</span><span class="key-sub">MNO</span></button>
+      <button class="keypad-btn" onclick="pressKey('7')"><span class="key-num">7</span><span class="key-sub">PQRS</span></button>
+      <button class="keypad-btn" onclick="pressKey('8')"><span class="key-num">8</span><span class="key-sub">TUV</span></button>
+      <button class="keypad-btn" onclick="pressKey('9')"><span class="key-num">9</span><span class="key-sub">WXYZ</span></button>
+      <button class="keypad-btn" onclick="pressKey('*')"><span class="key-num">*</span><span class="key-sub"></span></button>
+      <button class="keypad-btn" onclick="pressKey('0')"><span class="key-num">0</span><span class="key-sub">+</span></button>
+      <button class="keypad-btn" onclick="pressKey('#')"><span class="key-num">#</span><span class="key-sub"></span></button>
+    </div>
+    <div class="keypad-action"><button class="hide-keypad-btn" onclick="toggleKeypad()">Sembunyikan</button></div>
+  </div>
+
+  <div id="toast" class="toast">Notifikasi</div>
+
+  <script>
+    // --- CONSTANTS & STATE ---
+    const STORAGE_KEY = 'ai_call_settings_v1';
+    const DEFAULT_SETTINGS = {
+      aiName: 'Vira',
+      aiRole: 'Pacar yang manja',
+      uiMode: 'ios', // 'ios' or 'android'
+      proximityEnabled: false
+    };
+
+    let timerInterval;
+    let seconds = 0;
+    let isAndroid = false;
+    let currentSettings = { ...DEFAULT_SETTINGS };
+    
+    // --- UI ELEMENTS ---
+    const ui = {
+      body: document.body,
+      bgLayer: document.getElementById('bgLayer'),
+      mainAvatar: document.getElementById('mainAvatar'),
+      settingsPanel: document.getElementById('settingsPanel'),
+      bottomSheet: document.getElementById('bottomSheet'),
+      sheetOverlay: document.getElementById('sheetOverlay'),
+      inputName: document.getElementById('inputName'),
+      inputRole: document.getElementById('inputRole'),
+      displayName: document.getElementById('callerName'),
+      proximityToggle: document.getElementById('proximityToggle'),
+      proximityOverlay: document.getElementById('proximityOverlay'),
+      statusLabel: document.getElementById('statusLabel'),
+      aiStatusDot: document.getElementById('aiStatusDot'),
+      optIos: document.getElementById('optIos'),
+      optAndroid: document.getElementById('optAndroid')
+    };
+
+    // --- INIT & LOCALSTORAGE ---
+    window.addEventListener('load', () => {
+      loadSettings();
+      applySettings();
+      // Simulate connecting
+      setTimeout(() => {
+        ui.statusLabel.innerText = "00:00";
+        ui.aiStatusDot.classList.add('listening'); // Dot ON when connected
+        startTimer();
+      }, 2000);
+    });
+
+    function loadSettings() {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        try {
+          currentSettings = { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
+        } catch (e) {
+          console.error("Gagal memuat setting", e);
+        }
+      }
+    }
+
+    function saveSettings() {
+      currentSettings.aiName = ui.inputName.value;
+      currentSettings.aiRole = ui.inputRole.value;
+      currentSettings.proximityEnabled = ui.proximityToggle.checked;
+      // UI Mode is saved in setOS function directly
+      
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(currentSettings));
+      updateDisplayInfo();
+    }
+
+    function applySettings() {
+      // Set Inputs
+      ui.inputName.value = currentSettings.aiName;
+      ui.inputRole.value = currentSettings.aiRole;
+      ui.proximityToggle.checked = currentSettings.proximityEnabled;
+      
+      // Apply UI Mode
+      setOS(currentSettings.uiMode);
+      
+      // Apply Display Name
+      updateDisplayInfo();
+    }
+
+    function updateDisplayInfo() {
+      ui.displayName.innerText = currentSettings.aiName || "AI";
+    }
+
+    // --- MENU & SHEET LOGIC ---
+    function toggleSheet(show) {
+      if (show) {
+        ui.bottomSheet.classList.add('open');
+        ui.sheetOverlay.classList.add('open');
+      } else {
+        ui.bottomSheet.classList.remove('open');
+        ui.sheetOverlay.classList.remove('open');
+      }
+    }
+    ui.sheetOverlay.addEventListener('click', () => toggleSheet(false));
+
+    function sheetAction(action) {
+      toggleSheet(false);
+      setTimeout(() => showToast(`Membuka ${action}...`), 300);
+    }
+
+    // --- SETTINGS LOGIC ---
+    function openSettings() {
+      toggleSheet(false); 
+      setTimeout(() => {
+        ui.settingsPanel.classList.add('open');
+      }, 300);
+    }
+
+    function closeSettings() {
+      ui.settingsPanel.classList.remove('open');
+      saveSettings(); // Auto save on close
+    }
+
+    function setOS(os) {
+      isAndroid = (os === 'android');
+      currentSettings.uiMode = os;
+      saveSettings(); // Save preference immediately
+
+      ui.optIos.classList.toggle('active', os === 'ios');
+      ui.optAndroid.classList.toggle('active', os === 'android');
+      
+      if (isAndroid) ui.body.classList.add('android-mode');
+      else ui.body.classList.remove('android-mode');
+      
+      showToast(`Mode ${os.toUpperCase()}`);
+    }
+
+    // --- PROXIMITY SENSOR ---
+    ui.proximityToggle.addEventListener('change', (e) => {
+      saveSettings();
+      if (e.target.checked) {
+        ui.proximityOverlay.classList.add('active');
+      } else {
+        ui.proximityOverlay.classList.remove('active');
+      }
+    });
+    ui.proximityOverlay.addEventListener('click', () => {
+      if (ui.proximityToggle.checked) {
+        ui.proximityToggle.checked = false;
+        ui.proximityOverlay.classList.remove('active');
+        saveSettings(); // Save state change
+        if (navigator.vibrate) navigator.vibrate(50);
+      }
+    });
+
+    // --- CALL FUNCTIONS ---
+    function startTimer() {
+      clearInterval(timerInterval);
+      timerInterval = setInterval(() => {
+        seconds++;
+        const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+        const s = (seconds % 60).toString().padStart(2, '0');
+        ui.statusLabel.innerText = `${m}:${s}`;
+      }, 1000);
+    }
+
+    function endCall() {
+      clearInterval(timerInterval);
+      ui.aiStatusDot.classList.remove('listening'); // Dot OFF
+      alert("Panggilan Berakhir.");
+      location.reload();
+    }
+
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.innerText = msg;
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2000);
+      if (navigator.vibrate) navigator.vibrate(10);
+    }
+
+    // --- BUTTONS ---
+    function toggleBtnState(btn, type) {
+      btn.classList.toggle('active');
+      const isActive = btn.classList.contains('active');
+      showToast(isActive ? `${type} Aktif` : `${type} Nonaktif`);
+    }
+
+    function toggleVideo(btn) {
+      btn.classList.toggle('active');
+      ui.body.classList.toggle('video-active');
+      
+      if (ui.body.classList.contains('video-active')) {
+        ui.bgLayer.style.backgroundImage = `url(${ui.mainAvatar.src})`;
+        ui.bgLayer.style.backgroundSize = "cover";
+        ui.bgLayer.style.backgroundPosition = "center";
+      } else {
+        ui.bgLayer.style.backgroundImage = "none";
+      }
+    }
+
+    function toggleKeypad() {
+      document.getElementById('keypadModal').classList.toggle('open');
+      document.getElementById('btnKeypad').classList.toggle('active');
+    }
+
+    function pressKey(key) {
+      if (navigator.vibrate) navigator.vibrate(30);
+    }
+
+  </script>
+  
+    <script>
+    // 1. KONFIGURASI SERVER (Ganti URL di bawah dengan URL dari Render kamu)
+    const RENDER_URL = "https://avoice-backend-xxxx.onrender.com"; 
+
+    // 2. REGISTER SERVICE WORKER (Agar PWA bisa di-install)
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js')
+          .then(reg => console.log('PWA: Service Worker Aktif'))
+          .catch(err => console.log('PWA: Gagal register', err));
+      });
+    }
+
+    // 3. LOGIKA AUTO-WAKE (Membangunkan Render saat PWA dibuka)
+    window.addEventListener('load', () => {
+      const loader = document.getElementById('loaderScreen');
+      const statusText = document.getElementById('loaderStatus');
+
+      async function wakeServer() {
+        if (!loader) return; // Proteksi jika elemen loader tidak ada
+        
+        try {
+          // Memanggil endpoint /wake di server Node.js Render
+          const response = await fetch(`${RENDER_URL}/wake`);
+          if (response.ok) {
+            console.log("Server: Bangun & Siap!");
+            // Efek transisi halus saat loader menghilang
+            loader.style.opacity = '0';
+            setTimeout(() => {
+              loader.style.display = 'none';
+            }, 500);
+          }
+        } catch (error) {
+          console.log("Server: Masih tidur, mencoba lagi...");
+          if (statusText) statusText.innerText = "Menghubungkan ulang...";
+          // Coba lagi setiap 3 detik sampai server membalas
+          setTimeout(wakeServer, 3000); 
+        }
+      }
+
+      wakeServer();
+    });
+
+    // 4. WAKE LOCK (Mencegah layar HP mati/sleep saat telepon sedang aktif)
+    let wakeLock = null;
+    const requestWakeLock = async () => {
+      try {
+        if ('wakeLock' in navigator) {
+          wakeLock = await navigator.wakeLock.request('screen');
+          console.log('Wake Lock: Layar akan tetap menyala');
+        }
+      } catch (err) {
+        console.log('Wake Lock: Gagal aktif', err);
+      }
+    };
+    requestWakeLock();
+
+    // Re-aktifkan wake lock jika user pindah tab dan kembali lagi
+    document.addEventListener('visibilitychange', async () => {
+      if (wakeLock !== null && document.visibilityState === 'visible') {
+        requestWakeLock();
+      }
+    });
+  </script>
+
+</body>
+</html>
