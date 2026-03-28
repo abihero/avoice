@@ -12,7 +12,7 @@ app.use(cors());
 
 // Inisialisasi Google AI (Gemini)
 // Kamu harus memasukkan API Key di Dashboard Render (Environment Variable)
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const genAI = new GoogleGenerativeAI(process.env.AIzaSyBtXCcShhYz_pdMZC-mwuwuLbFtCYqTq7M);
 
 // Endpoint untuk "Membangunkan" layar loading di HP
 app.get('/wake', (req, res) => {
