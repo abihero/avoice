@@ -654,16 +654,14 @@
     }
 
   </script>
-      <script>
+        <script>
     // 1. KONFIGURASI SERVER RAILWAY
     const RAILWAY_URL = "https://avoice-production.up.railway.app"; 
 
     // 2. REGISTER SERVICE WORKER (PWA)
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('sw.js')
-          .then(reg => console.log('PWA: Aktif'))
-          .catch(err => console.log('PWA: Gagal', err));
+        navigator.serviceWorker.register('sw.js').catch(err => console.log('PWA: Gagal', err));
       });
     }
 
@@ -671,7 +669,6 @@
     window.addEventListener('load', () => {
       const loader = document.getElementById('loaderScreen');
       const statusText = document.getElementById('loaderStatus');
-
       async function wakeServer() {
         try {
           const response = await fetch(`${RAILWAY_URL}/wake`);
@@ -687,86 +684,107 @@
       wakeServer();
     });
 
-    // 4. LOGIKA AI VOICE (Llama via Railway)
+    // 4. LOGIKA UTAMA JUSTOCALL
     (function() {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (SpeechRecognition) {
-        const recognition = new SpeechRecognition();
-        recognition.continuous = true; 
-        recognition.interimResults = false; 
-        recognition.lang = 'id-ID'; 
+      if (!SpeechRecognition) return alert("Gunakan Chrome/Safari terbaru.");
 
-        const wsUrl = RAILWAY_URL.replace(/^http/, 'ws');
-        let socket;
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true; 
+      recognition.interimResults = false; 
+      recognition.lang = 'id-ID'; 
 
-        function connectWebSocket() {
-          socket = new WebSocket(wsUrl);
+      const wsUrl = RAILWAY_URL.replace(/^http/, 'ws');
+      let socket;
 
-          socket.onopen = () => {
-            showToast("JustoCall: Terhubung");
-            
-            // --- SYNC UI DENGAN KONEKSI ASLI ---
-            ui.statusLabel.innerText = "00:00"; 
-            startTimer(); // Mulai hitungan waktu telepon
-            
-            try { recognition.start(); } catch(e) {}
-            if (ui.aiStatusDot) {
-                ui.aiStatusDot.style.display = "block";
-                ui.aiStatusDot.style.opacity = "1";
-                ui.aiStatusDot.classList.add('listening');
+      function connectWebSocket() {
+        socket = new WebSocket(wsUrl);
+
+        socket.onopen = () => {
+          showToast("JustoCall: Terhubung");
+          ui.statusLabel.innerText = "00:00"; 
+          startTimer(); 
+          try { recognition.start(); } catch(e) {}
+          if (ui.aiStatusDot) {
+              ui.aiStatusDot.style.display = "block";
+              ui.aiStatusDot.style.opacity = "1";
+              ui.aiStatusDot.classList.add('listening');
+          }
+        };
+
+        socket.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'text') {
+              // --- ANTI DING: Matikan mic segera ---
+              recognition.abort(); 
+
+              const utterance = new SpeechSynthesisUtterance(data.content);
+              utterance.lang = 'id-ID';
+              
+              // --- SETTING SUARA NATURAL ---
+              const voices = window.speechSynthesis.getVoices();
+              const indoVoice = voices.find(v => v.lang === 'id-ID' && v.name.includes('Google')) || voices.find(v => v.lang === 'id-ID');
+              if (indoVoice) utterance.voice = indoVoice;
+              utterance.rate = 1.0; 
+              utterance.pitch = 1.0;
+
+              window.speechSynthesis.speak(utterance);
+
+              utterance.onend = () => {
+                 setTimeout(() => {
+                   if (!window.speechSynthesis.speaking) {
+                     try { recognition.start(); } catch(e) {}
+                     if (ui.aiStatusDot) ui.aiStatusDot.style.opacity = "1";
+                   }
+                 }, 700); // Jeda agar sistem Android stabil
+              };
             }
-          };
-
-          socket.onmessage = (event) => {
-            try {
-              const data = JSON.parse(event.data);
-              if (data.type === 'text') {
-                const utterance = new SpeechSynthesisUtterance(data.content);
-                utterance.lang = 'id-ID';
-                utterance.rate = 1.1; 
-                
-                recognition.stop(); 
-                window.speechSynthesis.speak(utterance);
-
-                utterance.onend = () => {
-                   try { recognition.start(); } catch(e) {}
-                };
-              }
-            } catch (err) {}
-          };
-
-          socket.onclose = () => { 
-            clearInterval(timerInterval); // Berhenti timer jika putus
-            setTimeout(connectWebSocket, 3000); 
-          };
-        }
-
-        connectWebSocket();
-
-        recognition.onresult = (event) => {
-          const textMsg = event.results[event.results.length - 1][0].transcript;
-          if (socket && socket.readyState === WebSocket.OPEN) {
-            // Mengirim suara user + setting peran dari HP ke server
-            const payload = {
-                text: textMsg,
-                role: ui.inputRole.value || "Asisten ramah"
-            };
-            socket.send(JSON.stringify(payload));
-            if (ui.aiStatusDot) ui.aiStatusDot.style.opacity = "0.3";
-          }
+          } catch (err) {}
         };
 
-        recognition.onend = () => {
-          if (!window.speechSynthesis.speaking) {
-            try { recognition.start(); } catch(e) {}
-          }
+        socket.onclose = () => { 
+          clearInterval(timerInterval);
+          setTimeout(connectWebSocket, 3000); 
         };
-
-      } else {
-        alert("Gunakan Chrome untuk fitur suara.");
       }
+
+      connectWebSocket();
+
+      recognition.onresult = (event) => {
+        const textMsg = event.results[event.results.length - 1][0].transcript;
+        if (socket && socket.readyState === WebSocket.OPEN) {
+          // --- KIRIM NAMA & PERAN TERBARU KE SERVER ---
+          const payload = {
+              text: textMsg,
+              name: ui.inputName.value || "Vira",
+              role: ui.inputRole.value || "Asisten ramah"
+          };
+          socket.send(JSON.stringify(payload));
+          if (ui.aiStatusDot) ui.aiStatusDot.style.opacity = "0.3";
+        }
+      };
+
+      recognition.onend = () => {
+        if (!window.speechSynthesis.speaking) {
+          try { recognition.start(); } catch(e) {}
+        }
+      };
     })();
+
+    // 5. FIX PENGATURAN UI
+    function saveSettings() {
+      currentSettings.aiName = ui.inputName.value;
+      currentSettings.aiRole = ui.inputRole.value;
+      currentSettings.proximityEnabled = ui.proximityToggle.checked;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(currentSettings));
+      
+      // Update Nama di Layar Utama secara instan
+      ui.displayName.innerText = currentSettings.aiName;
+      showToast("Pengaturan Disimpan");
+    }
   </script>
+
 
 </body>
 </html>
