@@ -1,62 +1,59 @@
 const express = require('express');
 const { WebSocketServer } = require('ws');
 const cors = require('cors');
-const { GoogleGenerativeAI } = require("@google/generative-ai"); // Tambahkan ini
+const Groq = require('groq-sdk'); // Ganti library ke Groq
 
 const app = express();
-// Port 10000 wajib untuk Render Free Tier
+// Tetap pakai port 10000 untuk Render
 const PORT = process.env.PORT || 10000;
 
-// Konfigurasi CORS agar HANYA link GitHub Pages kamu yang bisa akses
 app.use(cors());
 
-// Inisialisasi Google AI (Gemini)
-// Kamu harus memasukkan API Key di Dashboard Render (Environment Variable)
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+// Gunakan API Key Groq yang diatur di Dashboard Render
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// Endpoint untuk "Membangunkan" layar loading di HP
+// Endpoint bangunkan server
 app.get('/wake', (req, res) => {
-    res.json({ status: "online", message: "JustoCall is Ready!" });
+    res.json({ status: "online", message: "JustoCall (OpenSource) is Ready!" });
 });
 
 const server = app.listen(PORT, () => {
     console.log(`Server JustoCall berjalan di port ${PORT}`);
 });
 
-// Setup WebSocket
 const wss = new WebSocketServer({ server });
 
-wss.on('connection', async (ws) => {
+wss.on('connection', (ws) => {
     console.log('Koneksi Baru: User terhubung ke JustoCall');
-
-    // Setup Model Gemini (1.5 Flash paling cepat untuk voice)
-    const model = genAI.getGenerativeModel({ 
-        model: "gemini-1.5-flash",
-        systemInstruction: "Kamu adalah JustoCall, asisten suara yang ramah dan membantu."
-    });
-
-    const chat = model.startChat();
 
     ws.on('message', async (msg) => {
         try {
-            // Jika pesan berupa teks (untuk testing)
-            const textMsg = msg.toString();
-            console.log('User berbicara:', textMsg);
+            const userText = msg.toString();
+            console.log('User berbicara:', userText);
 
-            // Kirim ke AI Gemini
-            const result = await chat.sendMessage(textMsg);
-            const response = await result.response;
-            const responseText = response.text();
+            // Panggil Llama 3 (Open Source - Sangat Cepat)
+            const chatCompletion = await groq.chat.completions.create({
+                messages: [
+                    { 
+                        role: "system", 
+                        content: "Kamu adalah JustoCall, asisten suara ramah dari CV Inovindo Artheon. Bicara singkat, padat, dan to-the-point seperti orang teleponan." 
+                    },
+                    { role: "user", content: userText }
+                ],
+                model: "llama3-8b-8192", // Model Open Source paling stabil & gratis
+            });
 
-            // Kirim balik ke HP (Frontend)
+            const aiResponse = chatCompletion.choices[0].message.content;
+
+            // Kirim balik ke HP
             ws.send(JSON.stringify({
                 type: 'text',
-                content: responseText
+                content: aiResponse
             }));
 
         } catch (error) {
-            console.error('AI Error:', error);
-            ws.send(JSON.stringify({ type: 'error', content: 'AI sedang sibuk.' }));
+            console.error('Groq AI Error:', error);
+            ws.send(JSON.stringify({ type: 'error', content: 'JustoCall sedang sibuk.' }));
         }
     });
 
@@ -64,6 +61,5 @@ wss.on('connection', async (ws) => {
         console.log('Koneksi JustoCall terputus');
     });
 
-    // Kirim pesan sambutan otomatis saat pertama terhubung
     ws.send(JSON.stringify({ type: 'status', content: 'Terhubung ke AI JustoCall' }));
 });
