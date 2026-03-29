@@ -5,6 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover, viewport-fit=cover">
   <meta name="theme-color" content="#000000">
   <title>AVoice Call - PWA Ready</title>
+  <link rel="manifest" href="manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/724/724664.png">
+
   <style>
     /* --- VARIABLES & THEME --- */
     :root {
@@ -490,11 +495,7 @@
       loadSettings();
       applySettings();
       // Simulate connecting
-      setTimeout(() => {
-        ui.statusLabel.innerText = "00:00";
-        ui.aiStatusDot.classList.add('listening'); // Dot ON when connected
-        startTimer();
-      }, 2000);
+      
     });
 
     function loadSettings() {
@@ -653,70 +654,118 @@
     }
 
   </script>
-  
-    <script>
-    // 1. KONFIGURASI SERVER (Ganti URL di bawah dengan URL dari Render kamu)
-    const RENDER_URL = "https://avoice.onrender.com"; 
+      <script>
+    // 1. KONFIGURASI SERVER RAILWAY
+    const RAILWAY_URL = "https://avoice-production.up.railway.app"; 
 
-    // 2. REGISTER SERVICE WORKER (Agar PWA bisa di-install)
+    // 2. REGISTER SERVICE WORKER (PWA)
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('sw.js')
-          .then(reg => console.log('PWA: Service Worker Aktif'))
-          .catch(err => console.log('PWA: Gagal register', err));
+          .then(reg => console.log('PWA: Aktif'))
+          .catch(err => console.log('PWA: Gagal', err));
       });
     }
 
-    // 3. LOGIKA AUTO-WAKE (Membangunkan Render saat PWA dibuka)
+    // 3. AUTO-WAKE RAILWAY & LOADER
     window.addEventListener('load', () => {
       const loader = document.getElementById('loaderScreen');
       const statusText = document.getElementById('loaderStatus');
 
       async function wakeServer() {
-        if (!loader) return; // Proteksi jika elemen loader tidak ada
-        
         try {
-          // Memanggil endpoint /wake di server Node.js Render
-          const response = await fetch(`${RENDER_URL}/wake`);
+          const response = await fetch(`${RAILWAY_URL}/wake`);
           if (response.ok) {
-            console.log("Server: Bangun & Siap!");
-            // Efek transisi halus saat loader menghilang
             loader.style.opacity = '0';
-            setTimeout(() => {
-              loader.style.display = 'none';
-            }, 500);
+            setTimeout(() => { loader.style.display = 'none'; }, 500);
           }
         } catch (error) {
-          console.log("Server: Masih tidur, mencoba lagi...");
-          if (statusText) statusText.innerText = "Menghubungkan ulang...";
-          // Coba lagi setiap 3 detik sampai server membalas
+          if (statusText) statusText.innerText = "Menghubungkan ke Railway...";
           setTimeout(wakeServer, 3000); 
         }
       }
-
       wakeServer();
     });
 
-    // 4. WAKE LOCK (Mencegah layar HP mati/sleep saat telepon sedang aktif)
-    let wakeLock = null;
-    const requestWakeLock = async () => {
-      try {
-        if ('wakeLock' in navigator) {
-          wakeLock = await navigator.wakeLock.request('screen');
-          console.log('Wake Lock: Layar akan tetap menyala');
-        }
-      } catch (err) {
-        console.log('Wake Lock: Gagal aktif', err);
-      }
-    };
-    requestWakeLock();
+    // 4. LOGIKA AI VOICE (Llama via Railway)
+    (function() {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        const recognition = new SpeechRecognition();
+        recognition.continuous = true; 
+        recognition.interimResults = false; 
+        recognition.lang = 'id-ID'; 
 
-    // Re-aktifkan wake lock jika user pindah tab dan kembali lagi
-    document.addEventListener('visibilitychange', async () => {
-      if (wakeLock !== null && document.visibilityState === 'visible') {
-        requestWakeLock();
+        const wsUrl = RAILWAY_URL.replace(/^http/, 'ws');
+        let socket;
+
+        function connectWebSocket() {
+          socket = new WebSocket(wsUrl);
+
+          socket.onopen = () => {
+            showToast("JustoCall: Terhubung");
+            
+            // --- SYNC UI DENGAN KONEKSI ASLI ---
+            ui.statusLabel.innerText = "00:00"; 
+            startTimer(); // Mulai hitungan waktu telepon
+            
+            try { recognition.start(); } catch(e) {}
+            if (ui.aiStatusDot) {
+                ui.aiStatusDot.style.display = "block";
+                ui.aiStatusDot.style.opacity = "1";
+                ui.aiStatusDot.classList.add('listening');
+            }
+          };
+
+          socket.onmessage = (event) => {
+            try {
+              const data = JSON.parse(event.data);
+              if (data.type === 'text') {
+                const utterance = new SpeechSynthesisUtterance(data.content);
+                utterance.lang = 'id-ID';
+                utterance.rate = 1.1; 
+                
+                recognition.stop(); 
+                window.speechSynthesis.speak(utterance);
+
+                utterance.onend = () => {
+                   try { recognition.start(); } catch(e) {}
+                };
+              }
+            } catch (err) {}
+          };
+
+          socket.onclose = () => { 
+            clearInterval(timerInterval); // Berhenti timer jika putus
+            setTimeout(connectWebSocket, 3000); 
+          };
+        }
+
+        connectWebSocket();
+
+        recognition.onresult = (event) => {
+          const textMsg = event.results[event.results.length - 1][0].transcript;
+          if (socket && socket.readyState === WebSocket.OPEN) {
+            // Mengirim suara user + setting peran dari HP ke server
+            const payload = {
+                text: textMsg,
+                role: ui.inputRole.value || "Asisten ramah"
+            };
+            socket.send(JSON.stringify(payload));
+            if (ui.aiStatusDot) ui.aiStatusDot.style.opacity = "0.3";
+          }
+        };
+
+        recognition.onend = () => {
+          if (!window.speechSynthesis.speaking) {
+            try { recognition.start(); } catch(e) {}
+          }
+        };
+
+      } else {
+        alert("Gunakan Chrome untuk fitur suara.");
       }
-    });
+    })();
   </script>
 
 </body>
